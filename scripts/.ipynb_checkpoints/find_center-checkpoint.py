@@ -418,25 +418,26 @@ from skimage.registration import phase_cross_correlation
 
 # Currently, I apply this phase correlation method to find the center of the image, and iterative method not applied
 
+
+
 def phase_correlation_method(
-    JF_Img: np.ndarray,
+    image: np.ndarray,
     init_center: tuple[float, float],
     mask: np.ndarray,
-    cropsize: int,
     upsample_factor: int = 10
-):
+) -> tuple[float, float]:
     """
     Refine beam-center by 180° rotation + phase-correlation,
     properly handling masked (invalid) pixels.
 
     Parameters
     ----------
-    JFImg : (H, W) array
+    image : (H, W) array
         Diffraction frame; invalid pixels (e.g., masked quadrant) can be any value.
     init_center : (y0, x0)
         Initial guess for the beam center (row, col).
     mask : (H, W) bool array
-        True where JFImg pixels are valid; False for masked/invalid pixels.
+        True where image pixels are valid; False for masked/invalid pixels.
     upsample_factor : int
         Upsampling for subpixel precision.
 
@@ -446,81 +447,26 @@ def phase_correlation_method(
         Refined center coordinates (row, col).
     """
 
+    y0, x0 = init_center
 
-    cy, cx = init_center
-    cy, cx = int(round(cy)), int(round(cx))
-    half = cropsize // 2
 
-    # 1) Crop image and mask, flip them, combine the cropped and flipped to create centrosymmetry
-    # I do this try to cancel the insymmetry caused by invalid pixels
-    img_crop  = JF_Img[cy-half:cy+half, cx-half:cx+half]
-    img_flip = np.flip(img_crop)
-    msk_crop  = mask[cy-half:cy+half, cx-half:cx+half].astype(bool)
-    msk_flip  = np.flip(msk_crop)
-    # img_combine = img_crop*(~msk_crop) + img_flip*(~msk_flip)*msk_crop
-    # valid_mask = (~msk_crop) | (~msk_flip)
-
-    # This avoids asymmetry created because of the mask
-    img_combine = img_crop*(~(msk_crop|msk_flip))
-    valid_mask = ~(msk_crop|msk_flip)
-    
-    
     # 2) Rotate by 180° about the array center (pivot = init_center in original)
-    img_rot = rotate(img_combine, 180, resize=False,
+    img_rot = rotate(image, 180, resize=False,
                      order=1, mode='constant', cval=0, preserve_range=True)
-    mask_rot = rotate(valid_mask.astype(float), 180, resize=False,
+    mask_rot = rotate(mask.astype(float), 180, resize=False,
                       order=0, mode='constant', cval=0, preserve_range=True) > 0.5
 
     # 3) Phase-correlation with masks
     shift_estimate, error, _ = phase_cross_correlation(
-        img_combine, img_rot,
+        image, img_rot,
         upsample_factor=upsample_factor,
-        reference_mask=valid_mask,
+        reference_mask=mask,
         moving_mask=mask_rot
     )
     dy, dx = shift_estimate
 
     # 4) Correct for 2x effect of pivot error
-    y0_ref = cy + dy / 2.0
-    x0_ref = cx + dx / 2.0
+    y0_ref = y0 + dy / 2.0
+    x0_ref = x0 + dx / 2.0
 
     return np.array([y0_ref, x0_ref])
-
-
-# def iterative_phase_correlation(JF_Img, mask, init_center_guess=None, cropsize=2048):
-    
-#     # 1) Set initial center guess to image center if none provided
-#     if init_center_guess is None:
-#         # geometric center of the full image
-#         init_center_guess = np.array(JF_Img.shape) / 2
-#     center = np.array(init_center_guess, dtype=float)
-
-#     # 2) Track the sequence of center estimates
-#     centers = [center.copy()]
-#     max_iterations = 8
-#     iteration = 0
-
-#     # 3) Loop until convergence or max iterations
-#     while iteration < max_iterations:
-#         iteration += 1
-#         print(f'iteration {iteration}')
-#         # 3a) Compute shift via phase correlation method        
-#         center = phase_correlation_method(JF_Img, center, mask, cropsize= 2048)
-
-#         # 3b) Check for convergence: shifts below 0.5 pixel in both directions
-#         if abs(center[0]-centers[-1][0]) < 1 and abs(center[1]-centers[-1][1]) < 1:
-#             # Converged: return final center and history
-#             return center, centers
-
-#         # 3d) boundary check, the center won't be too far away from the detector center
-#         center[0] = min(center[0], init_center_guess[0]+15)
-#         center[0] = max(center[0], init_center_guess[0]-15)
-#         center[1] = min(center[1], init_center_guess[1]+15)
-#         center[1] = max(center[1], init_center_guess[1]-15)
-        
-#         centers.append(center.copy())
-
-#     # 4) If we exit loop without convergence, warn and return None
-#     print('Warning: iterative_center_of_mass did not converge after', max_iterations, 'iterations')
-#     return None, centers
-    
